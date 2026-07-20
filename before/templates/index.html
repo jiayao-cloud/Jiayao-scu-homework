@@ -15,6 +15,7 @@
                 <a href="/logout" class="nav-link">退出</a>
             {% else %}
                 <a href="/login" class="nav-link">登录</a>
+                <a href="/register" class="nav-link">注册</a>
             {% endif %}
         </div>
     </nav>
@@ -55,6 +56,50 @@
                 <a href="/logout" class="btn btn-danger">退出登录</a>
             </div>
         </div>
+
+        <!-- 搜索功能 -->
+        <div class="card" style="margin-top: 24px;">
+            <h2 class="card-title">用户搜索</h2>
+            <form method="GET" action="/search" class="form">
+                <div class="form-group">
+                    <input type="text" name="keyword" class="form-input" placeholder="输入用户名或邮箱关键词搜索" value="{{ keyword or '' }}">
+                </div>
+                <button type="submit" class="btn btn-primary btn-block">搜 索</button>
+            </form>
+
+            {% if keyword %}
+                {% if search_results %}
+                <div style="margin-top: 20px;">
+                    <h3 style="font-size: 16px; margin-bottom: 12px; color: #555;">搜索结果：</h3>
+                    <table class="info-table">
+                        <thead>
+                            <tr style="background-color: #f9fafb;">
+                                <th style="padding: 10px 8px; text-align: left; font-weight: 600; color: #555;">ID</th>
+                                <th style="padding: 10px 8px; text-align: left; font-weight: 600; color: #555;">用户名</th>
+                                <th style="padding: 10px 8px; text-align: left; font-weight: 600; color: #555;">邮箱</th>
+                                <th style="padding: 10px 8px; text-align: left; font-weight: 600; color: #555;">手机</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in search_results %}
+                            <tr>
+                                <td style="padding: 10px 8px;">{{ row[0] }}</td>
+                                <td style="padding: 10px 8px;">{{ row[1] }}</td>
+                                <td style="padding: 10px 8px;">{{ row[3] }}</td>
+                                <td style="padding: 10px 8px;">{{ row[4] }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div style="margin-top: 20px;">
+                    <p class="text-muted">无搜索结果</p>
+                </div>
+                {% endif %}
+            {% endif %}
+        </div>
+
         {% else %}
         <div class="card">
             <h2 class="card-title">请先登录</h2>

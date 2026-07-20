@@ -99,6 +99,12 @@ a {
     border: 1px solid #fecaca;
 }
 
+.alert-success {
+    background-color: #f0fdf4;
+    color: #16a34a;
+    border: 1px solid #bbf7d0;
+}
+
 /* ===== Form ===== */
 .form {
     display: flex;

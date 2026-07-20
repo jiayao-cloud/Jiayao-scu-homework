@@ -1,38 +1,61 @@
 # Jiayao-scu-homework
 
-本仓库保存一个 Flask 用户管理示例的安全修复作业。项目已整理到仓库根目录，原 `2026/7/19` 分层目录已移除，根目录只保留这一份全局 README。
+本仓库是 Class02 用户管理网站的 SQL 注入漏洞修复迭代。根目录只保留一份全局 README，代码按修复前后拆分，便于对照审计和验收。
 
 ## 目录结构
 
 ```text
 .
-├── before/                  # 修复前代码快照，敏感值已脱敏
-├── after/                   # 修复后的可运行 Flask 项目
-├── tests/                   # 针对修复后项目的安全回归测试
-├── .gitignore
-└── README.md
+|-- before/   # Class02 原始源码快照，保留 SQL 注入问题结构，真实口令和固定密钥已脱敏
+|-- after/    # 基于上一版安全修复继续迭代后的 Class02 可运行项目
+|-- tests/    # 面向 after/ 的安全回归测试
+|-- .gitignore
+`-- README.md
 ```
 
-`before/` 用于对比漏洞修复前的实现方式，保留了固定 Secret、明文密码、GET 登出、缺少 CSRF、调试模式等问题的代码结构，但真实密码和固定密钥均已替换为脱敏占位符。`after/` 是修复后的版本，`tests/` 用于验证主要安全要求。
+## 漏洞范围
+
+本次迭代只围绕 SQL 注入修复展开，同时保留上一版已完成的基础安全加固。`before/` 中的漏洞主要出现在搜索和注册两类数据库操作。
+
+搜索接口把用户输入直接拼进 SQL：
+
+```python
+sql = f"SELECT * FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'"
+cursor.execute(sql)
+```
+
+因此攻击者可以通过联合查询改变原始查询语义。例如输入：
+
+```text
+x' union select 1,username||':'||password,3,email,phone from users--+
+```
+
+在修复前会把用户表中的账号和密码字段拼接到搜索结果中，造成敏感信息泄露。
+
+注册接口同样直接拼接用户输入：
+
+```python
+sql = f"INSERT INTO users (username, password, email, phone) VALUES ('{username}', '{password}', '{email}', '{phone}')"
+cursor.execute(sql)
+```
+
+该写法会让注册表单成为 SQL 注入入口，可能造成异常插入、语句结构破坏，甚至在更宽松的数据库配置下引发进一步数据篡改风险。
 
 ## 修复内容
 
-本项目主要完成以下安全加固：
+`after/` 在原安全版本基础上补齐 Class02 的 SQLite 搜索和注册功能，并完成 SQL 注入修复：
 
-1. 移除页面中的调试凭据提示，密码改为从环境变量读取。
-2. 使用 Werkzeug `scrypt` 哈希保存密码，不再在内存用户表或页面中暴露明文密码。
-3. Flask `SECRET_KEY` 改为环境变量配置，生产环境缺失时拒绝启动，开发环境使用随机值。
-4. 登录和登出加入 CSRF Token，登出改为 POST 请求。
-5. 登录成功后清空旧 Session 并重新生成 CSRF Token，降低会话固定风险。
-6. 登录失败加入基于 IP 和用户名的简单速率限制。
-7. Cookie 显式启用 `HttpOnly`、`SameSite=Lax`，生产环境启用 `Secure`。
-8. 首页只展示脱敏邮箱和手机号，不展示密码、余额等敏感字段。
-9. 增加 CSP、`X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`、`Permissions-Policy` 等响应头。
-10. 关闭 Flask/Werkzeug 调试模式，避免交互式调试器暴露。
+1. 所有数据库读写改为 SQLite 占位符绑定参数，不再把用户输入拼接进 SQL 字符串。
+2. 搜索接口使用 `LIKE ? ESCAPE '\\'`，并对 `%`、`_`、`\` 做转义，避免通配符被滥用扩大查询范围。
+3. 搜索结果只查询并返回 `id`、`username`、`email`、`phone`，不再返回 `password`、`password_hash`、`balance` 等敏感字段。
+4. 注册接口增加用户名、密码、邮箱、手机号格式校验，插入时使用参数绑定并捕获用户名重复错误。
+5. 密码从明文存储改为 Werkzeug `scrypt` 哈希存储，默认账号密码通过环境变量注入。
+6. 数据库路径支持 `DATABASE_PATH` 配置，默认使用 `data/users.db`，数据库文件不提交到仓库。
+7. 保留上一版安全加固：CSRF 防护、POST 登出、会话 Cookie 安全属性、登录限速、安全响应头、生产环境禁止固定 Secret 和关闭调试模式。
 
-## 本地运行修复版
+## 运行修复版
 
-需要 Python 3.11+。
+需要 Python 3.11 或以上版本。
 
 ```powershell
 cd after
@@ -45,12 +68,12 @@ $env:FLASK_SECRET_KEY = "local-only-random-secret-at-least-32-characters"
 $env:ADMIN_PASSWORD = "local-admin-password-at-least-12"
 $env:ALICE_PASSWORD = "local-alice-password-at-least-12"
 $env:SESSION_COOKIE_SECURE = "0"
+$env:DATABASE_PATH = "data/users.db"
+
 python app.py
 ```
 
-生产环境必须设置足够长且随机的 `FLASK_SECRET_KEY`，为每个用户配置独立强密码，并通过 HTTPS 部署。不要把真实环境变量写入仓库。
-
-## 自动化测试
+## 测试
 
 在仓库根目录执行：
 
@@ -58,8 +81,16 @@ python app.py
 python -m unittest discover -s tests -v
 ```
 
-测试覆盖密码哈希、登录 CSRF、登出方式、Cookie 安全属性、敏感信息隐藏、登录限速和安全响应头等修复点。
+当前测试覆盖：
+
+1. 默认账号密码已哈希写入 SQLite。
+2. 登录和注册必须携带 CSRF Token。
+3. 搜索注入 payload 不会触发联合查询数据回显。
+4. 页面不会暴露密码哈希、余额等敏感字段。
+5. 登出只允许 POST。
+6. 登录失败限速和安全响应头保持有效。
+7. `after/app.py` 不再出现旧版 SQL 字符串拼接模式。
 
 ## 提交边界
 
-本仓库只保留课程作业需要的修复前后对比代码、修复后项目和测试代码。原始压缩包中的攻击辅助脚本未纳入仓库，修复前快照中的真实凭据也已脱敏，避免把可直接复用的敏感信息公开。
+`before/` 用于展示漏洞修复前的代码结构，但真实默认密码、固定 Flask Secret 等敏感值已替换为脱敏占位符。仓库不包含攻击辅助脚本、真实数据库文件、`.env` 文件、Cookie、Token 或任何可直接复用的私密凭据。

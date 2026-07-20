@@ -6,6 +6,10 @@
     <div class="card login-card">
         <h2 class="card-title">用户登录</h2>
 
+        {% if msg %}
+        <div class="alert alert-success">{{ msg }}</div>
+        {% endif %}
+
         {% if error %}
         <div class="alert alert-error">{{ error }}</div>
         {% endif %}
@@ -20,7 +24,11 @@
                 <label for="password">密码</label>
                 <input type="password" id="password" name="password" class="form-input" placeholder="请输入密码" maxlength="256" autocomplete="current-password" required>
             </div>
-            <button type="submit" class="btn btn-primary btn-block">登 录</button>
+            <button type="submit" class="btn btn-primary btn-block">登录</button>
         </form>
+
+        <div class="action-bar">
+            <p class="text-muted">还没有账号？<a href="{{ url_for('register') }}" class="text-link">立即注册</a></p>
+        </div>
     </div>
 {% endblock %}
