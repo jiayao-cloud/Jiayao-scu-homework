@@ -1,59 +1,46 @@
 # Jiayao-scu-homework
 
-本仓库是 Class02 用户管理网站的 SQL 注入漏洞修复迭代。根目录只保留一份全局 README，代码按修复前后拆分，便于对照审计和验收。
+本仓库是 Class03 用户管理网站的漏洞修复迭代。项目保留上一版已经完成的登录、注册、搜索和 SQL 注入修复能力，在此基础上新增并修复“用户头像上传”功能中的任意文件上传漏洞。
 
 ## 目录结构
 
 ```text
 .
-|-- before/   # Class02 原始源码快照，保留 SQL 注入问题结构，真实口令和固定密钥已脱敏
-|-- after/    # 基于上一版安全修复继续迭代后的 Class02 可运行项目
+|-- before/   # Class03 修复前源码：保留头像上传任意文件上传漏洞
+|-- after/    # Class03 修复后源码：在原功能基础上完成安全加固
 |-- tests/    # 面向 after/ 的安全回归测试
+|-- 文件上传漏洞报告-贾耀.md
 |-- .gitignore
 `-- README.md
 ```
 
-## 漏洞范围
+## 修复前问题
 
-本次迭代只围绕 SQL 注入修复展开，同时保留上一版已完成的基础安全加固。`before/` 中的漏洞主要出现在搜索和注册两类数据库操作。
+`before/` 中的 `/upload` 路由允许登录用户上传头像，但服务端存在以下问题：
 
-搜索接口把用户输入直接拼进 SQL：
+1. 不检查文件后缀，HTML、JavaScript、SVG、PHP 等非图片文件均可上传。
+2. 不检查文件真实内容，伪造后缀的脚本文件也会被保存。
+3. 直接使用用户提交的原始文件名保存，存在覆盖、可预测 URL 和路径处理风险。
+4. 文件保存到 `static/uploads/`，上传后自动成为同源公开静态资源。
+5. 当前 CSP 虽然阻止内联脚本，但攻击者可以同时上传 HTML 和同源 JS 文件，实现同源 JavaScript 执行。
 
-```python
-sql = f"SELECT * FROM users WHERE username LIKE '%{keyword}%' OR email LIKE '%{keyword}%'"
-cursor.execute(sql)
-```
-
-因此攻击者可以通过联合查询改变原始查询语义。例如输入：
-
-```text
-x' union select 1,username||':'||password,3,email,phone from users--+
-```
-
-在修复前会把用户表中的账号和密码字段拼接到搜索结果中，造成敏感信息泄露。
-
-注册接口同样直接拼接用户输入：
-
-```python
-sql = f"INSERT INTO users (username, password, email, phone) VALUES ('{username}', '{password}', '{email}', '{phone}')"
-cursor.execute(sql)
-```
-
-该写法会让注册表单成为 SQL 注入入口，可能造成异常插入、语句结构破坏，甚至在更宽松的数据库配置下引发进一步数据篡改风险。
+实测结论：在 Flask 环境下 PHP 文件只会作为静态内容返回，不会被解释执行；但“上传 HTML + 上传同源 JS + 访问上传 HTML”的链路可以真实触发浏览器脚本执行，因此漏洞有效。
 
 ## 修复内容
 
-`after/` 在原安全版本基础上补齐 Class02 的 SQLite 搜索和注册功能，并完成 SQL 注入修复：
+`after/` 在不破坏登录、注册、搜索功能的前提下完成以下修复：
 
-1. 所有数据库读写改为 SQLite 占位符绑定参数，不再把用户输入拼接进 SQL 字符串。
-2. 搜索接口使用 `LIKE ? ESCAPE '\\'`，并对 `%`、`_`、`\` 做转义，避免通配符被滥用扩大查询范围。
-3. 搜索结果只查询并返回 `id`、`username`、`email`、`phone`，不再返回 `password`、`password_hash`、`balance` 等敏感字段。
-4. 注册接口增加用户名、密码、邮箱、手机号格式校验，插入时使用参数绑定并捕获用户名重复错误。
-5. 密码从明文存储改为 Werkzeug `scrypt` 哈希存储，默认账号密码通过环境变量注入。
-6. 数据库路径支持 `DATABASE_PATH` 配置，默认使用 `data/users.db`，数据库文件不提交到仓库。
-7. 保留上一版安全加固：CSRF 防护、POST 登出、会话 Cookie 安全属性、登录限速、安全响应头、生产环境禁止固定 Secret 和关闭调试模式。
+1. 上传接口加入 CSRF 校验，防止第三方页面诱导已登录用户发起上传请求。
+2. 仅允许 `jpg`、`jpeg`、`png`、`gif`、`webp` 头像格式。
+3. 读取文件头魔数校验真实图片类型，拒绝 HTML、JS、SVG、PHP 以及伪装成图片的文本文件。
+4. 使用 `secure_filename()` 提取并规范化原始文件名中的扩展名，不信任用户提交的文件路径。
+5. 使用 `uuid4().hex` 生成随机文件名保存，避免用户控制最终 URL 或覆盖同名文件。
+6. 上传文件默认保存到 `instance/avatars/`，不再进入 `static/uploads/` 公开静态目录。
+7. 新增受控路由 `/avatars/<filename>` 读取头像，只允许匹配随机文件名格式的图片文件，并设置固定图片 MIME 类型。
+8. `/avatars` 响应加入登录校验和 no-store 缓存控制。
+9. `.gitignore` 忽略数据库、日志、实例上传目录和测试上传产物，避免把运行数据或 POC 文件提交到公开仓库。
 
-## 运行修复版
+## 运行 after
 
 需要 Python 3.11 或以上版本。
 
@@ -69,6 +56,7 @@ $env:ADMIN_PASSWORD = "local-admin-password-at-least-12"
 $env:ALICE_PASSWORD = "local-alice-password-at-least-12"
 $env:SESSION_COOKIE_SECURE = "0"
 $env:DATABASE_PATH = "data/users.db"
+$env:AVATAR_UPLOAD_DIR = "instance/avatars"
 
 python app.py
 ```
@@ -81,16 +69,17 @@ python app.py
 python -m unittest discover -s tests -v
 ```
 
-当前测试覆盖：
+测试覆盖范围包括：
 
-1. 默认账号密码已哈希写入 SQLite。
-2. 登录和注册必须携带 CSRF Token。
-3. 搜索注入 payload 不会触发联合查询数据回显。
-4. 页面不会暴露密码哈希、余额等敏感字段。
-5. 登出只允许 POST。
-6. 登录失败限速和安全响应头保持有效。
-7. `after/app.py` 不再出现旧版 SQL 字符串拼接模式。
+1. 默认账户密码使用哈希写入 SQLite。
+2. 登录、注册、登出和上传接口的 CSRF 防护。
+3. 搜索接口无法通过 UNION SQL 注入回显敏感字段。
+4. 上传接口必须登录访问。
+5. HTML、JavaScript、SVG、PHP 和伪装图片内容被拒绝。
+6. 合法图片使用随机文件名保存到私有目录。
+7. 上传内容不会出现在 `/static/uploads/原始文件名`。
+8. `/avatars/<filename>` 只允许登录用户访问合法随机图片名。
 
 ## 提交边界
 
-`before/` 用于展示漏洞修复前的代码结构，但真实默认密码、固定 Flask Secret 等敏感值已替换为脱敏占位符。仓库不包含攻击辅助脚本、真实数据库文件、`.env` 文件、Cookie、Token 或任何可直接复用的私密凭据。
+`before/` 用于展示漏洞修复前结构，真实默认口令、固定密钥、数据库、日志、Cookie、Token、上传 POC 文件和运行缓存均不提交到仓库。漏洞报告只记录验证结论和修复方法，不提供可直接复用的一句话木马或攻击脚本文件。

@@ -2,12 +2,14 @@ import os
 import re
 import sys
 import unittest
+from io import BytesIO
 from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT_DIR / "after"
 TEST_DB = ROOT_DIR / ".test-security.db"
+TEST_AVATAR_DIR = ROOT_DIR / ".test-avatars"
 sys.path.insert(0, str(APP_DIR))
 
 os.environ["FLASK_ENV"] = "testing"
@@ -16,18 +18,27 @@ os.environ["ADMIN_PASSWORD"] = "TestOnly-Admin-Password-2026!"
 os.environ["ALICE_PASSWORD"] = "TestOnly-Alice-Password-2026!"
 os.environ["SESSION_COOKIE_SECURE"] = "1"
 os.environ["DATABASE_PATH"] = str(TEST_DB)
+os.environ["AVATAR_UPLOAD_DIR"] = str(TEST_AVATAR_DIR)
 
 if TEST_DB.exists():
     TEST_DB.unlink()
+if TEST_AVATAR_DIR.exists():
+    for child in TEST_AVATAR_DIR.iterdir():
+        if child.is_file():
+            child.unlink()
 
 from app import _connect, _failed_attempts, app, check_password_hash  # noqa: E402
 
 
-class SecureClass02AppTests(unittest.TestCase):
+class SecureClass03AppTests(unittest.TestCase):
     def setUp(self):
         app.config.update(TESTING=True)
         _failed_attempts.clear()
         self.client = app.test_client()
+        TEST_AVATAR_DIR.mkdir(exist_ok=True)
+        for child in TEST_AVATAR_DIR.iterdir():
+            if child.is_file():
+                child.unlink()
 
     @staticmethod
     def csrf_token(response):
@@ -174,11 +185,86 @@ class SecureClass02AppTests(unittest.TestCase):
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response.headers["Referrer-Policy"], "same-origin")
 
+    def test_upload_requires_login_and_csrf(self):
+        anonymous = self.client.get("/upload")
+        self.assertEqual(anonymous.status_code, 302)
+        self.assertEqual(anonymous.headers["Location"], "/login")
+
+        self.login()
+        missing_csrf = self.client.post(
+            "/upload",
+            data={"avatar": (BytesIO(b"\x89PNG\r\n\x1a\nnot-a-real-image-body"), "avatar.png")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(missing_csrf.status_code, 400)
+
+    def test_upload_rejects_script_php_svg_and_mismatched_content(self):
+        self.login()
+        upload_page = self.client.get("/upload")
+        token = self.csrf_token(upload_page)
+
+        samples = (
+            (b"<html><script src='/static/uploads/poc.js'></script></html>", "avatar.html"),
+            (b"<" + b"?php echo 'not executed'; ?" + b">", "avatar.php"),
+            (b"<svg xmlns='http://www.w3.org/2000/svg'></svg>", "avatar.svg"),
+            (b"<script>alert(1)</script>", "avatar.png"),
+        )
+
+        for payload, filename in samples:
+            response = self.client.post(
+                "/upload",
+                data={"csrf_token": token, "avatar": (BytesIO(payload), filename)},
+                content_type="multipart/form-data",
+            )
+            body = response.get_data(as_text=True)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("alert-error", body)
+            self.assertNotIn("/avatars/", body)
+
+        self.assertEqual(list(TEST_AVATAR_DIR.iterdir()), [])
+
+    def test_upload_accepts_image_with_random_private_filename(self):
+        self.login()
+        upload_page = self.client.get("/upload")
+        token = self.csrf_token(upload_page)
+
+        png_header = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+        response = self.client.post(
+            "/upload",
+            data={"csrf_token": token, "avatar": (BytesIO(png_header), "avatar.png")},
+            content_type="multipart/form-data",
+        )
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        match = re.search(r"/avatars/([a-f0-9]{32}\.png)", body)
+        self.assertIsNotNone(match)
+        stored_name = match.group(1)
+        self.assertNotIn("/static/uploads/avatar.png", body)
+        self.assertTrue((TEST_AVATAR_DIR / stored_name).exists())
+
+        public_static = self.client.get("/static/uploads/avatar.png")
+        self.assertEqual(public_static.status_code, 404)
+
+        fetched = self.client.get(f"/avatars/{stored_name}")
+        self.assertEqual(fetched.status_code, 200)
+        self.assertEqual(fetched.mimetype, "image/png")
+        fetched.close()
+
+    def test_avatar_route_requires_login_and_rejects_untrusted_names(self):
+        self.assertEqual(self.client.get("/avatars/abc.png").status_code, 302)
+        self.login()
+        self.assertEqual(self.client.get("/avatars/avatar.png").status_code, 404)
+        self.assertEqual(self.client.get("/avatars/../app.py").status_code, 404)
+
     def test_source_has_no_legacy_sql_string_concatenation(self):
         source = (APP_DIR / "app.py").read_text(encoding="utf-8")
         self.assertNotIn("LIKE '%{keyword}%'", source)
         self.assertNotIn("execute(sql)", source)
         self.assertNotIn("INSERT INTO users (username, password, email, phone) VALUES ('{username}'", source)
+        self.assertNotIn("filename = uploaded_file.filename", source)
+        self.assertNotIn('url_for("static", filename=f"uploads/{filename}")', source)
+        self.assertIn("secure_filename", source)
+        self.assertIn("uuid4", source)
 
 
 if __name__ == "__main__":

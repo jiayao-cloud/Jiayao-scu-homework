@@ -7,10 +7,12 @@ import time
 from collections import defaultdict, deque
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
-from flask import Flask, abort, redirect, render_template, request, session, url_for
+from flask import Flask, abort, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.serving import WSGIRequestHandler
+from werkzeug.utils import secure_filename
 
 
 app = Flask(__name__)
@@ -18,6 +20,15 @@ app = Flask(__name__)
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,64}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_RE = re.compile(r"^[0-9+\-\s]{5,20}$")
+AVATAR_FILENAME_RE = re.compile(r"^[a-f0-9]{32}\.(?:jpg|jpeg|png|gif|webp)$")
+ALLOWED_AVATAR_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp"}
+AVATAR_MIME_TYPES = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+}
 
 
 def _load_secret_key():
@@ -45,8 +56,51 @@ def _database_path():
     return Path(os.environ.get("DATABASE_PATH", "data/users.db"))
 
 
+def _upload_dir():
+    return Path(os.environ.get("AVATAR_UPLOAD_DIR", Path(app.instance_path) / "avatars"))
+
+
+def _avatar_extension(filename):
+    cleaned_name = secure_filename(filename)
+    if "." not in cleaned_name:
+        return None
+    extension = cleaned_name.rsplit(".", 1)[1].lower()
+    return extension if extension in ALLOWED_AVATAR_EXTENSIONS else None
+
+
+def _detect_image_extension(header):
+    if header.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if header.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _validate_avatar(uploaded_file):
+    requested_extension = _avatar_extension(uploaded_file.filename)
+    if not requested_extension:
+        return None, "只允许上传 jpg、jpeg、png、gif 或 webp 图片"
+
+    uploaded_file.stream.seek(0)
+    header = uploaded_file.stream.read(512)
+    uploaded_file.stream.seek(0)
+    detected_extension = _detect_image_extension(header)
+    if not detected_extension:
+        return None, "上传文件不是有效的图片"
+    if requested_extension in {"jpg", "jpeg"} and detected_extension == "jpg":
+        return requested_extension, None
+    if requested_extension != detected_extension:
+        return None, "文件扩展名与图片内容不一致"
+    return requested_extension, None
+
+
 app.secret_key = _load_secret_key()
 app.config.update(
+    MAX_CONTENT_LENGTH=16 * 1024 * 1024,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=os.environ.get(
         "SESSION_COOKIE_SECURE", "1" if os.environ.get("FLASK_ENV") == "production" else "0"
@@ -242,7 +296,7 @@ def apply_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    if request.endpoint in {"index", "login", "logout", "register", "search"}:
+    if request.endpoint in {"index", "login", "logout", "register", "search", "upload", "avatar_file"}:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     if request.is_secure:
@@ -343,6 +397,43 @@ def register():
 @app.route("/search")
 def search():
     return _render_index(request.args.get("keyword", ""))
+
+
+@app.route("/upload", methods=["GET", "POST"])
+def upload():
+    if not session.get("username"):
+        return redirect(url_for("login"))
+
+    error = None
+    file_url = None
+
+    if request.method == "POST":
+        if not _valid_csrf_token():
+            abort(400, description="Invalid CSRF token")
+
+        uploaded_file = request.files.get("avatar")
+        if not uploaded_file or not uploaded_file.filename:
+            error = "请选择要上传的文件"
+        else:
+            extension, error = _validate_avatar(uploaded_file)
+            if not error:
+                upload_dir = _upload_dir()
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                filename = f"{uuid4().hex}.{extension}"
+                uploaded_file.save(upload_dir / filename)
+                file_url = url_for("avatar_file", filename=filename)
+
+    return render_template("upload.html", error=error, file_url=file_url)
+
+
+@app.route("/avatars/<path:filename>")
+def avatar_file(filename):
+    if not session.get("username"):
+        return redirect(url_for("login"))
+    if not AVATAR_FILENAME_RE.fullmatch(filename):
+        abort(404)
+    extension = filename.rsplit(".", 1)[1].lower()
+    return send_from_directory(_upload_dir(), filename, mimetype=AVATAR_MIME_TYPES[extension])
 
 
 @app.post("/logout")

@@ -92,6 +92,21 @@ a {
     margin-top: 24px;
 }
 
+.upload-result {
+    margin-top: 24px;
+    text-align: center;
+}
+
+.avatar-preview {
+    display: block;
+    max-width: 180px;
+    max-height: 180px;
+    margin: 12px auto;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    object-fit: cover;
+}
+
 .card-title {
     font-size: 22px;
     font-weight: 600;

@@ -5,3 +5,9 @@ __pycache__/
 data/
 *.db
 .test-*.db
+server.log
+server.err.log
+instance/
+.test-avatars/
+**/static/uploads/*
+!**/static/uploads/.gitkeep
