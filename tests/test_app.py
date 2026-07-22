@@ -30,7 +30,7 @@ if TEST_AVATAR_DIR.exists():
 from app import _connect, _failed_attempts, app, check_password_hash  # noqa: E402
 
 
-class SecureClass03AppTests(unittest.TestCase):
+class SecureClass04AppTests(unittest.TestCase):
     def setUp(self):
         app.config.update(TESTING=True)
         _failed_attempts.clear()
@@ -184,6 +184,65 @@ class SecureClass03AppTests(unittest.TestCase):
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response.headers["Referrer-Policy"], "same-origin")
+
+    def test_profile_blocks_horizontal_authorization_and_defaults_to_current_user(self):
+        self.login("alice", os.environ["ALICE_PASSWORD"])
+
+        blocked = self.client.get("/profile", query_string={"user_id": "1"})
+        self.assertEqual(blocked.status_code, 403)
+
+        own_profile = self.client.get("/profile")
+        own_body = own_profile.get_data(as_text=True)
+        self.assertEqual(own_profile.status_code, 200)
+        self.assertIn("alice", own_body)
+        self.assertIn("alice@example.com", own_body)
+        self.assertNotIn("admin@example.com", own_body)
+
+    def test_admin_can_view_other_user_profile(self):
+        self.login("admin", os.environ["ADMIN_PASSWORD"])
+
+        response = self.client.get("/profile", query_string={"user_id": "2"})
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("alice", body)
+        self.assertIn("alice@example.com", body)
+
+    def test_recharge_requires_csrf_owner_and_positive_amount(self):
+        self.login("alice", os.environ["ALICE_PASSWORD"])
+
+        missing_csrf = self.client.post("/recharge", data={"user_id": "2", "amount": "50"})
+        self.assertEqual(missing_csrf.status_code, 400)
+
+        profile_page = self.client.get("/profile")
+        token = self.csrf_token(profile_page)
+
+        blocked_user = self.client.post(
+            "/recharge",
+            data={"csrf_token": token, "user_id": "1", "amount": "50"},
+        )
+        self.assertEqual(blocked_user.status_code, 403)
+
+        blocked_negative = self.client.post(
+            "/recharge",
+            data={"csrf_token": token, "user_id": "2", "amount": "-50"},
+        )
+        self.assertEqual(blocked_negative.status_code, 400)
+
+        response = self.client.post(
+            "/recharge",
+            data={"csrf_token": token, "user_id": "2", "amount": "50"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/profile?user_id=2")
+
+        conn = _connect()
+        try:
+            alice_balance = conn.execute("SELECT balance FROM users WHERE id = ?", (2,)).fetchone()["balance"]
+            admin_balance = conn.execute("SELECT balance FROM users WHERE id = ?", (1,)).fetchone()["balance"]
+        finally:
+            conn.close()
+        self.assertEqual(alice_balance, 150)
+        self.assertEqual(admin_balance, 99999)
 
     def test_upload_requires_login_and_csrf(self):
         anonymous = self.client.get("/upload")

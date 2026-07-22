@@ -218,6 +218,26 @@ def _get_user(username):
         conn.close()
 
 
+def _get_user_by_id(user_id):
+    conn = _connect()
+    try:
+        return conn.execute(
+            """
+            SELECT id, username, password_hash, role, email, phone, balance
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def _current_user():
+    username = session.get("username")
+    return _get_user(username) if username else None
+
+
 def _public_profile(user):
     """Return only fields appropriate for the authenticated profile page."""
     return {
@@ -296,7 +316,17 @@ def apply_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    if request.endpoint in {"index", "login", "logout", "register", "search", "upload", "avatar_file"}:
+    if request.endpoint in {
+        "index",
+        "login",
+        "logout",
+        "register",
+        "search",
+        "upload",
+        "avatar_file",
+        "profile",
+        "recharge",
+    }:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     if request.is_secure:
@@ -397,6 +427,71 @@ def register():
 @app.route("/search")
 def search():
     return _render_index(request.args.get("keyword", ""))
+
+
+@app.route("/profile")
+def profile():
+    current_user = _current_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    user_id = request.args.get("user_id", "").strip()
+    if not user_id:
+        requested_user = current_user
+    elif not user_id.isdigit():
+        abort(400, description="Invalid user_id")
+    else:
+        target_id = int(user_id)
+        if target_id != current_user["id"] and current_user["role"] != "admin":
+            abort(403)
+        requested_user = _get_user_by_id(target_id)
+    if not requested_user:
+        abort(404)
+
+    return render_template("profile.html", user=requested_user, error=request.args.get("error", ""))
+
+
+@app.post("/recharge")
+def recharge():
+    current_user = _current_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("login"))
+    if not _valid_csrf_token():
+        abort(400, description="Invalid CSRF token")
+
+    user_id = request.form.get("user_id", "").strip()
+    amount = request.form.get("amount", "").strip()
+    if not user_id.isdigit():
+        abort(400, description="Invalid user_id")
+    target_id = int(user_id)
+    if target_id != current_user["id"] and current_user["role"] != "admin":
+        abort(403)
+    try:
+        parsed_amount = int(amount)
+    except ValueError:
+        abort(400, description="Invalid amount")
+    if parsed_amount <= 0 or parsed_amount > 100000:
+        abort(400, description="Invalid amount")
+
+    conn = _connect()
+    try:
+        result = conn.execute(
+            """
+            UPDATE users
+            SET balance = balance + ?
+            WHERE id = ?
+            """,
+            (parsed_amount, target_id),
+        )
+        if result.rowcount != 1:
+            abort(404)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return redirect(url_for("profile", user_id=target_id))
 
 
 @app.route("/upload", methods=["GET", "POST"])

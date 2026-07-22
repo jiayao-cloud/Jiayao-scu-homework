@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}个人中心 - 用户管理系统{% endblock %}
+
+{% block content %}
+    <div class="card">
+        <h2 class="card-title">个人中心</h2>
+
+        {% if error %}
+        <div class="alert alert-error">{{ error }}</div>
+        {% endif %}
+
+        <div class="user-info">
+            <table class="info-table">
+                <tr>
+                    <td class="info-label">ID</td>
+                    <td class="info-value">{{ user.id }}</td>
+                </tr>
+                <tr>
+                    <td class="info-label">用户名</td>
+                    <td class="info-value">{{ user.username }}</td>
+                </tr>
+                <tr>
+                    <td class="info-label">邮箱</td>
+                    <td class="info-value">{{ user.email }}</td>
+                </tr>
+                <tr>
+                    <td class="info-label">手机</td>
+                    <td class="info-value">{{ user.phone }}</td>
+                </tr>
+                <tr>
+                    <td class="info-label">余额</td>
+                    <td class="info-value">{{ user.balance }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <form method="post" action="{{ url_for('recharge') }}" class="form recharge-form" autocomplete="off">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="user_id" value="{{ user.id }}">
+            <div class="form-group">
+                <label for="amount">充值金额</label>
+                <input type="number" id="amount" name="amount" class="form-input" min="1" max="100000" step="1" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">充值</button>
+        </form>
+    </div>
+{% endblock %}
