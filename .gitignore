@@ -4,9 +4,12 @@ __pycache__/
 .venv/
 data/
 *.db
+*.db-journal
 .test-*.db
 server.log
 server.err.log
+server-*.log
+server-*.err.log
 instance/
 .test-avatars/
 **/static/uploads/*

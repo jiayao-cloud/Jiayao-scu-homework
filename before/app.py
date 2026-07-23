@@ -247,7 +247,7 @@ def apply_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    if request.endpoint in {"index", "login", "logout", "register", "search", "upload"}:
+    if request.endpoint in {"index", "page", "login", "logout", "register", "search", "upload"}:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     if request.is_secure:
@@ -255,12 +255,19 @@ def apply_security_headers(response):
     return response
 
 
-def _render_index(keyword=""):
+def _render_index(keyword="", page_content=None):
     username = session.get("username")
     user = _get_user(username) if username else None
     if username and not user:
         session.clear()
-        return render_template("index.html", username=None, user=None, keyword="", search_results=None)
+        return render_template(
+            "index.html",
+            username=None,
+            user=None,
+            keyword="",
+            search_results=None,
+            page_content=page_content,
+        )
 
     search_results = _search_users(keyword) if username and keyword else None
     return render_template(
@@ -269,12 +276,28 @@ def _render_index(keyword=""):
         user=_public_profile(user) if user else None,
         keyword=keyword,
         search_results=search_results,
+        page_content=page_content,
     )
 
 
 @app.route("/")
 def index():
     return _render_index(request.args.get("keyword", ""))
+
+
+@app.route("/page")
+def page():
+    name = request.args.get("name", "")
+    page_path = os.path.join("pages", name)
+
+    if not os.path.isfile(page_path):
+        page_path = f"{page_path}.html"
+    if not os.path.isfile(page_path):
+        return _render_index(page_content="页面不存在")
+
+    with open(page_path, encoding="utf-8") as page_file:
+        page_content = page_file.read()
+    return _render_index(page_content=page_content)
 
 
 @app.route("/login", methods=["GET", "POST"])

@@ -185,6 +185,25 @@ class SecureClass04AppTests(unittest.TestCase):
         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertEqual(response.headers["Referrer-Policy"], "same-origin")
 
+    def test_dynamic_help_page_loads_from_allowlist(self):
+        response = self.client.get("/page", query_string={"name": "help"})
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("帮助中心", body)
+        self.assertIn("动态页面", body)
+
+        with_suffix = self.client.get("/page", query_string={"name": "help.html"})
+        self.assertEqual(with_suffix.status_code, 200)
+        self.assertIn("帮助中心", with_suffix.get_data(as_text=True))
+
+    def test_dynamic_page_blocks_file_inclusion_attempt(self):
+        response = self.client.get("/page", query_string={"name": "../app.py"})
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("页面不存在", body)
+        self.assertNotIn("def _load_secret_key", body)
+        self.assertNotIn("FLASK_SECRET_KEY", body)
+
     def test_profile_blocks_horizontal_authorization_and_defaults_to_current_user(self):
         self.login("alice", os.environ["ALICE_PASSWORD"])
 
@@ -322,6 +341,8 @@ class SecureClass04AppTests(unittest.TestCase):
         self.assertNotIn("INSERT INTO users (username, password, email, phone) VALUES ('{username}'", source)
         self.assertNotIn("filename = uploaded_file.filename", source)
         self.assertNotIn('url_for("static", filename=f"uploads/{filename}")', source)
+        self.assertNotIn('os.path.join("pages", name)', source)
+        self.assertIn("ALLOWED_PAGES", source)
         self.assertIn("secure_filename", source)
         self.assertIn("uuid4", source)
 

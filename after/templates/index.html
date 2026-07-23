@@ -30,8 +30,18 @@
         <div class="action-bar">
             <a href="{{ url_for('profile') }}" class="btn btn-primary">个人中心</a>
             <a href="{{ url_for('upload') }}" class="btn btn-primary">上传头像</a>
+            <a href="{{ url_for('page', name='help') }}" class="btn btn-primary">帮助中心</a>
         </div>
     </div>
+
+    {% if page_content %}
+    <div class="card">
+        <h2 class="card-title">动态页面</h2>
+        <div class="page-content">
+            {{ page_content | safe }}
+        </div>
+    </div>
+    {% endif %}
 
     <div class="card search-card">
         <h2 class="card-title">用户搜索</h2>
@@ -78,7 +88,17 @@
         <p class="text-muted">登录后可以访问个人资料和安全搜索功能。</p>
         <div class="action-bar">
             <a href="{{ url_for('login') }}" class="btn btn-primary">前往登录</a>
+            <a href="{{ url_for('page', name='help') }}" class="btn btn-primary">帮助中心</a>
         </div>
     </div>
+
+    {% if page_content %}
+    <div class="card">
+        <h2 class="card-title">动态页面</h2>
+        <div class="page-content">
+            {{ page_content | safe }}
+        </div>
+    </div>
+    {% endif %}
     {% endif %}
 {% endblock %}

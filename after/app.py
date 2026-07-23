@@ -29,6 +29,8 @@ AVATAR_MIME_TYPES = {
     "gif": "image/gif",
     "webp": "image/webp",
 }
+PAGES_DIR = Path(__file__).resolve().parent / "pages"
+ALLOWED_PAGES = {"help": "help.html"}
 
 
 def _load_secret_key():
@@ -318,6 +320,7 @@ def apply_security_headers(response):
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     if request.endpoint in {
         "index",
+        "page",
         "login",
         "logout",
         "register",
@@ -334,12 +337,19 @@ def apply_security_headers(response):
     return response
 
 
-def _render_index(keyword=""):
+def _render_index(keyword="", page_content=None):
     username = session.get("username")
     user = _get_user(username) if username else None
     if username and not user:
         session.clear()
-        return render_template("index.html", username=None, user=None, keyword="", search_results=None)
+        return render_template(
+            "index.html",
+            username=None,
+            user=None,
+            keyword="",
+            search_results=None,
+            page_content=page_content,
+        )
 
     search_results = _search_users(keyword) if username and keyword else None
     return render_template(
@@ -348,12 +358,29 @@ def _render_index(keyword=""):
         user=_public_profile(user) if user else None,
         keyword=keyword,
         search_results=search_results,
+        page_content=page_content,
     )
 
 
 @app.route("/")
 def index():
     return _render_index(request.args.get("keyword", ""))
+
+
+@app.route("/page")
+def page():
+    requested_name = request.args.get("name", "").strip()
+    page_key = requested_name[:-5] if requested_name.endswith(".html") else requested_name
+    filename = ALLOWED_PAGES.get(page_key)
+    if not filename:
+        return _render_index(page_content="页面不存在"), 404
+
+    page_path = PAGES_DIR / filename
+    try:
+        page_content = page_path.read_text(encoding="utf-8")
+    except OSError:
+        return _render_index(page_content="页面不存在"), 404
+    return _render_index(page_content=page_content)
 
 
 @app.route("/login", methods=["GET", "POST"])
