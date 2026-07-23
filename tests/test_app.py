@@ -30,7 +30,7 @@ if TEST_AVATAR_DIR.exists():
 from app import _connect, _failed_attempts, app, check_password_hash  # noqa: E402
 
 
-class SecureClass04AppTests(unittest.TestCase):
+class SecureClass05AppTests(unittest.TestCase):
     def setUp(self):
         app.config.update(TESTING=True)
         _failed_attempts.clear()
