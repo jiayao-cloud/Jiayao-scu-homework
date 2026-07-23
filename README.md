@@ -12,6 +12,7 @@
 |-- tests/    # 面向 after/ 的安全回归测试
 |-- file-upload-vulnerability-report-jiayao.md
 |-- local-file-inclusion-vulnerability-report-jiayao.md
+|-- local-file-inclusion-vulnerability-report-jiayao.docx
 |-- .gitignore
 `-- README.md
 ```
@@ -76,6 +77,8 @@ python -m unittest discover -s tests -v
 1. `before-file-inclusion-source-disclosure.png`：`before/` 中通过 `/page?name=../app.py` 包含并回显源码。
 2. `after-file-inclusion-blocked.png`：`after/` 中同一请求被拦截并显示“页面不存在”。
 3. `after-file-inclusion-normal-help.png`：`after/` 中 `/page?name=help` 正常显示帮助中心。
+
+中文 DOCX 报告为 `local-file-inclusion-vulnerability-report-jiayao.docx`，已插入以上真实测试截图。
 
 ## 提交边界
 
