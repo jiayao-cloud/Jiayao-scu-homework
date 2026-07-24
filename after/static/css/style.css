@@ -133,6 +133,12 @@ a {
     border: 1px solid #fecaca;
 }
 
+.alert-success {
+    background-color: #ecfdf3;
+    color: #067647;
+    border: 1px solid #abefc6;
+}
+
 /* ===== Form ===== */
 .form {
     display: flex;

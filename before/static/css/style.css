@@ -97,6 +97,10 @@ a {
     text-align: center;
 }
 
+.recharge-form {
+    margin-top: 24px;
+}
+
 .avatar-preview {
     display: block;
     max-width: 180px;

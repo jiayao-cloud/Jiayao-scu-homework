@@ -1,47 +1,51 @@
 # Jiayao-scu-homework
 
-本仓库是 Class05 用户管理网站的安全修复迭代。项目保留登录、注册、搜索、头像上传、个人中心、充值功能，并在本轮新增动态页面加载功能。
+Class06 用户管理网站安全修复迭代。本项目保留登录、注册、搜索、头像上传、个人中心、充值、动态页面加载和密码修改功能，并以 `before` / `after` 展示课程作业中的修复前后差异。
 
 ## 目录结构
 
 ```text
 .
-|-- before/   # 修复前代码快照，用于展示漏洞写法
-|-- after/    # 修复后代码，保留功能并完成安全加固
-|-- evidence/ # 本轮真实测试截图
-|-- tests/    # 面向 after/ 的安全回归测试
-|-- file-upload-vulnerability-report-jiayao.md
-|-- local-file-inclusion-vulnerability-report-jiayao.md
-|-- local-file-inclusion-vulnerability-report-jiayao.docx
-|-- .gitignore
+|-- before/    # Class06 修复前代码：包含用于课程验证的密码修改 CSRF / 越权缺陷
+|-- after/     # Class06 修复后代码：保留功能并完成安全加固
+|-- evidence/  # 本轮实测证据图
+|-- tests/     # 面向 after/ 的安全回归测试
+|-- Class06-CSRF-password-change-vulnerability-report-jiayao.docx
 `-- README.md
 ```
 
-## 本轮功能
+## Class06 功能
 
-新增 `/page?name=help` 动态页面加载入口，并在 `pages/help.html` 中放置帮助中心内容。首页会在 `page_content` 存在时展示动态页面内容，同时提供“帮助中心”快捷入口。
+- 登录、注册、用户搜索
+- 受控头像上传与私有头像访问
+- 个人中心、余额充值
+- 白名单动态帮助页面加载
+- 密码修改
 
 ## 本轮漏洞与修复
 
-本轮围绕动态页面加载中的本地文件包含漏洞进行迭代。
+`before/app.py` 的 `/change-password` 接口只检查会话是否存在，却信任客户端提交的 `username`，且未校验 CSRF Token、原密码和确认密码。低权限用户可以构造针对其他账户的请求，实测能够修改管理员密码。
 
-`before/app.py` 按作业要求保留不安全实现：直接从 URL 参数读取 `name`，使用 `os.path.join("pages", name)` 拼接路径，文件不存在时追加 `.html` 后缀再次读取，且不校验 `../`。这种写法会让攻击者尝试读取 `pages/` 目录外的本地文件。
+`after/app.py` 完成以下修复：
 
-`after/app.py` 保留 `/page` 功能，但不再把用户输入直接作为文件路径使用。修复方式是建立固定白名单 `ALLOWED_PAGES = {"help": "help.html"}`，只允许加载预期页面；非法页面名、文件包含 payload 和不存在页面统一返回“页面不存在”并返回 404。页面目录使用应用自身目录下的 `pages/`，避免受启动工作目录影响。
+1. 密码修改对象只从当前服务端会话获取，不读取或信任客户端的 `username`。
+2. 所有密码修改请求必须通过 CSRF Token 的常量时间比较校验。
+3. 必须验证当前密码、新密码确认值和 12-256 位长度规则。
+4. 成功修改后轮换会话与 CSRF Token，降低会话固定和旧 Token 重放风险。
+5. 管理员浏览其他用户资料时不展示密码修改表单。
 
-## 已有修复
+## 既有安全加固
 
-`after/` 还保留之前迭代的安全修复：
-
-1. SQL 注入：搜索、注册、登录等数据库操作使用参数化查询。
-2. 头像上传：限制扩展名和文件头，使用随机文件名，上传文件保存到受控目录，并通过 `/avatars/<filename>` 访问。
-3. 越权访问：普通用户不能通过修改 `user_id` 查看他人个人中心。
-4. 充值绕过：充值接口校验 CSRF、用户权限和正整数金额范围。
-5. 会话与响应头：启用 HttpOnly、SameSite、缓存控制、CSP、X-Frame-Options 等基础安全头。
+- SQL 注入：数据库读写使用参数化查询，搜索关键词转义 `LIKE` 通配符。
+- 文件上传：限制图片扩展名和文件头，生成随机文件名，上传目录不直接暴露为静态资源。
+- 越权访问：普通用户不能通过篡改 `user_id` 查看他人资料或操作他人余额。
+- 充值逻辑：校验 CSRF、账户归属、金额类型和正数范围。
+- 文件包含：动态页面使用固定白名单，不将 URL 参数直接作为文件路径。
+- 会话防护：启用 HttpOnly、SameSite、缓存控制和基础安全响应头。
 
 ## 运行 after
 
-需要 Python 3.11 或以上版本。
+需要 Python 3.11 或更高版本。
 
 ```powershell
 cd after
@@ -68,18 +72,8 @@ python app.py
 python -m unittest discover -s tests -v
 ```
 
-测试覆盖登录、注册、搜索、上传、个人中心、充值、动态页面加载，以及 SQL 注入、文件上传、越权、负数充值、文件包含等历史漏洞的修复效果。
+当前测试覆盖登录、注册、搜索、上传、个人中心、充值、动态页面加载与密码修改，同时验证 SQL 注入、文件上传、越权、负数充值、文件包含和 CSRF 密码重置等历史漏洞的修复效果。
 
-## 证据截图
+## 课程边界
 
-本轮文件包含漏洞验证截图位于 `evidence/`：
-
-1. `before-file-inclusion-source-disclosure.png`：`before/` 中通过 `/page?name=../app.py` 包含并回显源码。
-2. `after-file-inclusion-blocked.png`：`after/` 中同一请求被拦截并显示“页面不存在”。
-3. `after-file-inclusion-normal-help.png`：`after/` 中 `/page?name=help` 正常显示帮助中心。
-
-中文 DOCX 报告为 `local-file-inclusion-vulnerability-report-jiayao.docx`，已插入以上真实测试截图。
-
-## 提交边界
-
-`before/` 仅用于课程作业中的修复前后对比；真实口令、固定密钥、数据库、日志、Cookie、Token、上传样本和运行缓存不提交到仓库。
+`before/` 仅用于本地课程作业中展示漏洞与修复对比，不应部署或暴露到真实网络环境。真实口令、密钥、数据库、日志、Cookie、Token 和上传样本不应提交到仓库。

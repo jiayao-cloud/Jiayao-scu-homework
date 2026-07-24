@@ -20,6 +20,8 @@ app = Flask(__name__)
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,64}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_RE = re.compile(r"^[0-9+\-\s]{5,20}$")
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_LENGTH = 256
 AVATAR_FILENAME_RE = re.compile(r"^[a-f0-9]{32}\.(?:jpg|jpeg|png|gif|webp)$")
 ALLOWED_AVATAR_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp"}
 AVATAR_MIME_TYPES = {
@@ -294,7 +296,7 @@ def _valid_csrf_token():
 def _registration_error(username, password, email, phone):
     if not USERNAME_RE.fullmatch(username):
         return "用户名只能包含字母、数字和下划线，长度为 3-64 位"
-    if len(password) < 12 or len(password) > 256:
+    if len(password) < PASSWORD_MIN_LENGTH or len(password) > PASSWORD_MAX_LENGTH:
         return "密码长度至少 12 位"
     if len(email) > 254 or not EMAIL_RE.fullmatch(email):
         return "邮箱格式不正确"
@@ -329,6 +331,7 @@ def apply_security_headers(response):
         "avatar_file",
         "profile",
         "recharge",
+        "change_password",
     }:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
@@ -476,7 +479,13 @@ def profile():
     if not requested_user:
         abort(404)
 
-    return render_template("profile.html", user=requested_user, error=request.args.get("error", ""))
+    return render_template(
+        "profile.html",
+        user=requested_user,
+        can_change_password=requested_user["id"] == current_user["id"],
+        error=request.args.get("error", ""),
+        msg=request.args.get("msg", ""),
+    )
 
 
 @app.post("/recharge")
@@ -519,6 +528,49 @@ def recharge():
         conn.close()
 
     return redirect(url_for("profile", user_id=target_id))
+
+
+@app.post("/change-password")
+def change_password():
+    current_user = _current_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("login"))
+    if not _valid_csrf_token():
+        abort(400, description="Invalid CSRF token")
+
+    current_password = request.form.get("current_password", "")
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+    if not check_password_hash(current_user["password_hash"], current_password):
+        return redirect(url_for("profile", error="当前密码不正确"))
+    if new_password != confirm_password:
+        return redirect(url_for("profile", error="两次输入的新密码不一致"))
+    if not PASSWORD_MIN_LENGTH <= len(new_password) <= PASSWORD_MAX_LENGTH:
+        return redirect(url_for("profile", error="新密码长度不符合要求"))
+
+    conn = _connect()
+    try:
+        result = conn.execute(
+            """
+            UPDATE users
+            SET password_hash = ?
+            WHERE id = ?
+            """,
+            (generate_password_hash(new_password, method="scrypt"), current_user["id"]),
+        )
+        if result.rowcount != 1:
+            abort(404)
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Keep the user signed in while rotating credentials and CSRF state.
+    session.clear()
+    session.permanent = True
+    session["username"] = current_user["username"]
+    session["_csrf_token"] = secrets.token_urlsafe(32)
+    return redirect(url_for("profile", msg="密码修改成功"))
 
 
 @app.route("/upload", methods=["GET", "POST"])

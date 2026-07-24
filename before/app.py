@@ -7,10 +7,12 @@ import time
 from collections import defaultdict, deque
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
-from flask import Flask, abort, redirect, render_template, request, session, url_for
+from flask import Flask, abort, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.serving import WSGIRequestHandler
+from werkzeug.utils import secure_filename
 
 
 app = Flask(__name__)
@@ -18,6 +20,17 @@ app = Flask(__name__)
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,64}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_RE = re.compile(r"^[0-9+\-\s]{5,20}$")
+AVATAR_FILENAME_RE = re.compile(r"^[a-f0-9]{32}\.(?:jpg|jpeg|png|gif|webp)$")
+ALLOWED_AVATAR_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp"}
+AVATAR_MIME_TYPES = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+}
+PAGES_DIR = Path(__file__).resolve().parent / "pages"
+ALLOWED_PAGES = {"help": "help.html"}
 
 
 def _load_secret_key():
@@ -46,7 +59,45 @@ def _database_path():
 
 
 def _upload_dir():
-    return Path(app.static_folder) / "uploads"
+    return Path(os.environ.get("AVATAR_UPLOAD_DIR", Path(app.instance_path) / "avatars"))
+
+
+def _avatar_extension(filename):
+    cleaned_name = secure_filename(filename)
+    if "." not in cleaned_name:
+        return None
+    extension = cleaned_name.rsplit(".", 1)[1].lower()
+    return extension if extension in ALLOWED_AVATAR_EXTENSIONS else None
+
+
+def _detect_image_extension(header):
+    if header.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if header.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _validate_avatar(uploaded_file):
+    requested_extension = _avatar_extension(uploaded_file.filename)
+    if not requested_extension:
+        return None, "只允许上传 jpg、jpeg、png、gif 或 webp 图片"
+
+    uploaded_file.stream.seek(0)
+    header = uploaded_file.stream.read(512)
+    uploaded_file.stream.seek(0)
+    detected_extension = _detect_image_extension(header)
+    if not detected_extension:
+        return None, "上传文件不是有效的图片"
+    if requested_extension in {"jpg", "jpeg"} and detected_extension == "jpg":
+        return requested_extension, None
+    if requested_extension != detected_extension:
+        return None, "文件扩展名与图片内容不一致"
+    return requested_extension, None
 
 
 app.secret_key = _load_secret_key()
@@ -169,6 +220,26 @@ def _get_user(username):
         conn.close()
 
 
+def _get_user_by_id(user_id):
+    conn = _connect()
+    try:
+        return conn.execute(
+            """
+            SELECT id, username, password_hash, role, email, phone, balance
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def _current_user():
+    username = session.get("username")
+    return _get_user(username) if username else None
+
+
 def _public_profile(user):
     """Return only fields appropriate for the authenticated profile page."""
     return {
@@ -247,7 +318,18 @@ def apply_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "same-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    if request.endpoint in {"index", "page", "login", "logout", "register", "search", "upload"}:
+    if request.endpoint in {
+        "index",
+        "page",
+        "login",
+        "logout",
+        "register",
+        "search",
+        "upload",
+        "avatar_file",
+        "profile",
+        "recharge",
+    }:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     if request.is_secure:
@@ -287,16 +369,17 @@ def index():
 
 @app.route("/page")
 def page():
-    name = request.args.get("name", "")
-    page_path = os.path.join("pages", name)
+    requested_name = request.args.get("name", "").strip()
+    page_key = requested_name[:-5] if requested_name.endswith(".html") else requested_name
+    filename = ALLOWED_PAGES.get(page_key)
+    if not filename:
+        return _render_index(page_content="页面不存在"), 404
 
-    if not os.path.isfile(page_path):
-        page_path = f"{page_path}.html"
-    if not os.path.isfile(page_path):
-        return _render_index(page_content="页面不存在")
-
-    with open(page_path, encoding="utf-8") as page_file:
-        page_content = page_file.read()
+    page_path = PAGES_DIR / filename
+    try:
+        page_content = page_path.read_text(encoding="utf-8")
+    except OSError:
+        return _render_index(page_content="页面不存在"), 404
     return _render_index(page_content=page_content)
 
 
@@ -373,6 +456,96 @@ def search():
     return _render_index(request.args.get("keyword", ""))
 
 
+@app.route("/profile")
+def profile():
+    current_user = _current_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("login"))
+
+    user_id = request.args.get("user_id", "").strip()
+    if not user_id:
+        requested_user = current_user
+    elif not user_id.isdigit():
+        abort(400, description="Invalid user_id")
+    else:
+        target_id = int(user_id)
+        if target_id != current_user["id"] and current_user["role"] != "admin":
+            abort(403)
+        requested_user = _get_user_by_id(target_id)
+    if not requested_user:
+        abort(404)
+
+    return render_template("profile.html", user=requested_user, error=request.args.get("error", ""))
+
+
+@app.post("/recharge")
+def recharge():
+    current_user = _current_user()
+    if not current_user:
+        session.clear()
+        return redirect(url_for("login"))
+    if not _valid_csrf_token():
+        abort(400, description="Invalid CSRF token")
+
+    user_id = request.form.get("user_id", "").strip()
+    amount = request.form.get("amount", "").strip()
+    if not user_id.isdigit():
+        abort(400, description="Invalid user_id")
+    target_id = int(user_id)
+    if target_id != current_user["id"] and current_user["role"] != "admin":
+        abort(403)
+    try:
+        parsed_amount = int(amount)
+    except ValueError:
+        abort(400, description="Invalid amount")
+    if parsed_amount <= 0 or parsed_amount > 100000:
+        abort(400, description="Invalid amount")
+
+    conn = _connect()
+    try:
+        result = conn.execute(
+            """
+            UPDATE users
+            SET balance = balance + ?
+            WHERE id = ?
+            """,
+            (parsed_amount, target_id),
+        )
+        if result.rowcount != 1:
+            abort(404)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return redirect(url_for("profile", user_id=target_id))
+
+
+@app.post("/change-password")
+def change_password():
+    if not session.get("username"):
+        return redirect(url_for("login"))
+
+    username = request.form.get("username", "").strip()
+    new_password = request.form.get("new_password", "")
+
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            UPDATE users
+            SET password_hash = ?
+            WHERE username = ?
+            """,
+            (generate_password_hash(new_password, method="scrypt"), username),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return redirect(url_for("profile"))
+
+
 @app.route("/upload", methods=["GET", "POST"])
 def upload():
     if not session.get("username"):
@@ -382,17 +555,32 @@ def upload():
     file_url = None
 
     if request.method == "POST":
+        if not _valid_csrf_token():
+            abort(400, description="Invalid CSRF token")
+
         uploaded_file = request.files.get("avatar")
         if not uploaded_file or not uploaded_file.filename:
             error = "请选择要上传的文件"
         else:
-            upload_dir = _upload_dir()
-            upload_dir.mkdir(parents=True, exist_ok=True)
-            filename = uploaded_file.filename
-            uploaded_file.save(upload_dir / filename)
-            file_url = url_for("static", filename=f"uploads/{filename}")
+            extension, error = _validate_avatar(uploaded_file)
+            if not error:
+                upload_dir = _upload_dir()
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                filename = f"{uuid4().hex}.{extension}"
+                uploaded_file.save(upload_dir / filename)
+                file_url = url_for("avatar_file", filename=filename)
 
     return render_template("upload.html", error=error, file_url=file_url)
+
+
+@app.route("/avatars/<path:filename>")
+def avatar_file(filename):
+    if not session.get("username"):
+        return redirect(url_for("login"))
+    if not AVATAR_FILENAME_RE.fullmatch(filename):
+        abort(404)
+    extension = filename.rsplit(".", 1)[1].lower()
+    return send_from_directory(_upload_dir(), filename, mimetype=AVATAR_MIME_TYPES[extension])
 
 
 @app.post("/logout")

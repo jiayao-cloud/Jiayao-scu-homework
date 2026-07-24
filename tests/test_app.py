@@ -30,7 +30,7 @@ if TEST_AVATAR_DIR.exists():
 from app import _connect, _failed_attempts, app, check_password_hash  # noqa: E402
 
 
-class SecureClass05AppTests(unittest.TestCase):
+class SecureClass06AppTests(unittest.TestCase):
     def setUp(self):
         app.config.update(TESTING=True)
         _failed_attempts.clear()
@@ -262,6 +262,99 @@ class SecureClass05AppTests(unittest.TestCase):
             conn.close()
         self.assertEqual(alice_balance, 150)
         self.assertEqual(admin_balance, 99999)
+
+    def test_change_password_requires_csrf_current_password_and_session_identity(self):
+        registration_page = self.client.get("/register")
+        registration_token = self.csrf_token(registration_page)
+        registration = self.client.post(
+            "/register",
+            data={
+                "username": "csrf_tester",
+                "password": "OriginalPassword2026!",
+                "email": "csrf-tester@example.com",
+                "phone": "13700137000",
+                "csrf_token": registration_token,
+            },
+        )
+        self.assertEqual(registration.status_code, 302)
+        self.login("csrf_tester", "OriginalPassword2026!")
+
+        conn = _connect()
+        try:
+            admin_hash_before = conn.execute(
+                "SELECT password_hash FROM users WHERE username = ?", ("admin",)
+            ).fetchone()["password_hash"]
+            tester_hash_before = conn.execute(
+                "SELECT password_hash FROM users WHERE username = ?", ("csrf_tester",)
+            ).fetchone()["password_hash"]
+        finally:
+            conn.close()
+
+        missing_csrf = self.client.post(
+            "/change-password",
+            data={
+                "username": "admin",
+                "current_password": "OriginalPassword2026!",
+                "new_password": "ChangedPassword2026!",
+                "confirm_password": "ChangedPassword2026!",
+            },
+        )
+        self.assertEqual(missing_csrf.status_code, 400)
+
+        profile_page = self.client.get("/profile")
+        profile_body = profile_page.get_data(as_text=True)
+        self.assertIn('name="csrf_token"', profile_body)
+        self.assertNotIn('name="username"', profile_body)
+        token = self.csrf_token(profile_page)
+
+        mismatched_confirmation = self.client.post(
+            "/change-password",
+            data={
+                "csrf_token": token,
+                "current_password": "OriginalPassword2026!",
+                "new_password": "ChangedPassword2026!",
+                "confirm_password": "DifferentPassword2026!",
+            },
+        )
+        self.assertEqual(mismatched_confirmation.status_code, 302)
+
+        wrong_current_password = self.client.post(
+            "/change-password",
+            data={
+                "csrf_token": token,
+                "current_password": "not-the-current-password",
+                "new_password": "ChangedPassword2026!",
+                "confirm_password": "ChangedPassword2026!",
+            },
+        )
+        self.assertEqual(wrong_current_password.status_code, 302)
+
+        changed = self.client.post(
+            "/change-password",
+            data={
+                "csrf_token": token,
+                "username": "admin",
+                "current_password": "OriginalPassword2026!",
+                "new_password": "ChangedPassword2026!",
+                "confirm_password": "ChangedPassword2026!",
+            },
+        )
+        self.assertEqual(changed.status_code, 302)
+        self.assertTrue(changed.headers["Location"].startswith("/profile?msg="))
+
+        conn = _connect()
+        try:
+            admin_hash_after = conn.execute(
+                "SELECT password_hash FROM users WHERE username = ?", ("admin",)
+            ).fetchone()["password_hash"]
+            tester_hash_after = conn.execute(
+                "SELECT password_hash FROM users WHERE username = ?", ("csrf_tester",)
+            ).fetchone()["password_hash"]
+        finally:
+            conn.close()
+        self.assertEqual(admin_hash_after, admin_hash_before)
+        self.assertNotEqual(tester_hash_after, tester_hash_before)
+        self.assertTrue(check_password_hash(tester_hash_after, "ChangedPassword2026!"))
 
     def test_upload_requires_login_and_csrf(self):
         anonymous = self.client.get("/upload")

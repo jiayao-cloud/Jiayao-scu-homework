@@ -11,6 +11,7 @@
         {% endif %}
 
         <form method="post" action="{{ url_for('upload') }}" class="form" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <div class="form-group">
                 <label for="avatar">选择头像文件</label>
                 <input type="file" id="avatar" name="avatar" class="form-input" required>
