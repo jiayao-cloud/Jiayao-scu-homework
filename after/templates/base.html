@@ -10,6 +10,8 @@
     <nav class="navbar">
         <div class="nav-brand">用户管理系统</div>
         <div class="nav-menu">
+            <a href="{{ url_for('welcome') }}" class="nav-link">欢迎页</a>
+            <a href="{{ url_for('feedback') }}" class="nav-link">反馈</a>
             {% if session.get('username') %}
                 <span class="nav-welcome">欢迎，{{ session.get('username') }}</span>
                 <a href="{{ url_for('profile') }}" class="nav-link">个人中心</a>

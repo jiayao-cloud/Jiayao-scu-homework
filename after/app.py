@@ -9,7 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, abort, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, abort, redirect, render_template, render_template_string, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.serving import WSGIRequestHandler
 from werkzeug.utils import secure_filename
@@ -327,6 +327,8 @@ def apply_security_headers(response):
         "logout",
         "register",
         "search",
+        "welcome",
+        "feedback",
         "upload",
         "avatar_file",
         "profile",
@@ -368,6 +370,111 @@ def _render_index(keyword="", page_content=None):
 @app.route("/")
 def index():
     return _render_index(request.args.get("keyword", ""))
+
+
+@app.route("/welcome")
+def welcome():
+    return render_template_string(
+        """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>??? - ??????</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">??????</div>
+        <div class="nav-menu">
+            <a href="{{ url_for('index') }}" class="nav-link">??</a>
+            <a href="{{ url_for('welcome') }}" class="nav-link">???</a>
+            <a href="{{ url_for('feedback') }}" class="nav-link">??</a>
+            <a href="{{ url_for('login') }}" class="nav-link">??</a>
+            <a href="{{ url_for('register') }}" class="nav-link">??</a>
+        </div>
+    </nav>
+    <main class="container">
+        {% if name %}
+            <h1>????{{ name }}?</h1>
+        {% else %}
+            <h1>??????????</h1>
+        {% endif %}
+    </main>
+</body>
+</html>""",
+        name=request.args.get("name", "").strip(),
+    )
+
+
+@app.route("/feedback", methods=["GET", "POST"])
+def feedback():
+    if request.method == "POST":
+        name = request.form.get("name", "")
+        message = request.form.get("message", "")
+        return render_template_string(
+            """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>?? - ??????</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">??????</div>
+        <div class="nav-menu">
+            <a href="{{ url_for('index') }}" class="nav-link">??</a>
+            <a href="{{ url_for('welcome') }}" class="nav-link">???</a>
+            <a href="{{ url_for('feedback') }}" class="nav-link">??</a>
+            <a href="{{ url_for('login') }}" class="nav-link">??</a>
+            <a href="{{ url_for('register') }}" class="nav-link">??</a>
+        </div>
+    </nav>
+    <main class="container">
+        <h2>{{ name }} ????</h2>
+        <p>{{ message }}</p>
+    </main>
+</body>
+</html>""",
+            name=name,
+            message=message,
+        )
+
+    return render_template_string(
+        """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>?? - ??????</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">??????</div>
+        <div class="nav-menu">
+            <a href="{{ url_for('index') }}" class="nav-link">??</a>
+            <a href="{{ url_for('welcome') }}" class="nav-link">???</a>
+            <a href="{{ url_for('feedback') }}" class="nav-link">??</a>
+            <a href="{{ url_for('login') }}" class="nav-link">??</a>
+            <a href="{{ url_for('register') }}" class="nav-link">??</a>
+        </div>
+    </nav>
+    <main class="container">
+        <h1>??</h1>
+        <form method="post" action="{{ url_for('feedback') }}" class="auth-form">
+            <label for="name">??</label>
+            <input id="name" name="name" type="text">
+            <label for="message">??</label>
+            <textarea id="message" name="message" rows="6"></textarea>
+            <button type="submit">??</button>
+        </form>
+    </main>
+</body>
+</html>"""
+    )
 
 
 @app.route("/page")

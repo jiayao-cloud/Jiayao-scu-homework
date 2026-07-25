@@ -9,7 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, abort, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, abort, redirect, render_template, render_template_string, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.serving import WSGIRequestHandler
 from werkzeug.utils import secure_filename
@@ -20,6 +20,8 @@ app = Flask(__name__)
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,64}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PHONE_RE = re.compile(r"^[0-9+\-\s]{5,20}$")
+PASSWORD_MIN_LENGTH = 12
+PASSWORD_MAX_LENGTH = 256
 AVATAR_FILENAME_RE = re.compile(r"^[a-f0-9]{32}\.(?:jpg|jpeg|png|gif|webp)$")
 ALLOWED_AVATAR_EXTENSIONS = {"jpg", "jpeg", "png", "gif", "webp"}
 AVATAR_MIME_TYPES = {
@@ -294,7 +296,7 @@ def _valid_csrf_token():
 def _registration_error(username, password, email, phone):
     if not USERNAME_RE.fullmatch(username):
         return "用户名只能包含字母、数字和下划线，长度为 3-64 位"
-    if len(password) < 12 or len(password) > 256:
+    if len(password) < PASSWORD_MIN_LENGTH or len(password) > PASSWORD_MAX_LENGTH:
         return "密码长度至少 12 位"
     if len(email) > 254 or not EMAIL_RE.fullmatch(email):
         return "邮箱格式不正确"
@@ -325,10 +327,13 @@ def apply_security_headers(response):
         "logout",
         "register",
         "search",
+        "welcome",
+        "feedback",
         "upload",
         "avatar_file",
         "profile",
         "recharge",
+        "change_password",
     }:
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
@@ -365,6 +370,86 @@ def _render_index(keyword="", page_content=None):
 @app.route("/")
 def index():
     return _render_index(request.args.get("keyword", ""))
+
+
+@app.route("/welcome")
+def welcome():
+    name = request.args.get("name", "")
+    if name:
+        content = f"<h1>欢迎你，{name}！</h1>"
+    else:
+        content = "<h1>亲爱的用户，欢迎你！</h1>"
+
+    return render_template_string(
+        f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>欢迎页 - 用户管理系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">用户管理系统</div>
+        <div class="nav-menu">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/welcome" class="nav-link">欢迎页</a>
+            <a href="/feedback" class="nav-link">反馈</a>
+            <a href="/login" class="nav-link">登录</a>
+            <a href="/register" class="nav-link">注册</a>
+        </div>
+    </nav>
+    <main class="container">
+        {content}
+    </main>
+</body>
+</html>"""
+    )
+
+
+@app.route("/feedback", methods=["GET", "POST"])
+def feedback():
+    if request.method == "POST":
+        name = request.form.get("name", "")
+        message = request.form.get("message", "")
+        content = f"<h2>{name} 的反馈：</h2><p>{message}</p>"
+    else:
+        content = """<h1>反馈</h1>
+        <form method="post" action="/feedback" class="auth-form">
+            <label for="name">姓名</label>
+            <input id="name" name="name" type="text">
+            <label for="message">留言</label>
+            <textarea id="message" name="message" rows="6"></textarea>
+            <button type="submit">提交</button>
+        </form>"""
+
+    return render_template_string(
+        f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>反馈 - 用户管理系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">用户管理系统</div>
+        <div class="nav-menu">
+            <a href="/" class="nav-link">首页</a>
+            <a href="/welcome" class="nav-link">欢迎页</a>
+            <a href="/feedback" class="nav-link">反馈</a>
+            <a href="/login" class="nav-link">登录</a>
+            <a href="/register" class="nav-link">注册</a>
+        </div>
+    </nav>
+    <main class="container">
+        {content}
+    </main>
+</body>
+</html>"""
+    )
 
 
 @app.route("/page")
@@ -476,7 +561,13 @@ def profile():
     if not requested_user:
         abort(404)
 
-    return render_template("profile.html", user=requested_user, error=request.args.get("error", ""))
+    return render_template(
+        "profile.html",
+        user=requested_user,
+        can_change_password=requested_user["id"] == current_user["id"],
+        error=request.args.get("error", ""),
+        msg=request.args.get("msg", ""),
+    )
 
 
 @app.post("/recharge")
@@ -523,27 +614,45 @@ def recharge():
 
 @app.post("/change-password")
 def change_password():
-    if not session.get("username"):
+    current_user = _current_user()
+    if not current_user:
+        session.clear()
         return redirect(url_for("login"))
+    if not _valid_csrf_token():
+        abort(400, description="Invalid CSRF token")
 
-    username = request.form.get("username", "").strip()
+    current_password = request.form.get("current_password", "")
     new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+    if not check_password_hash(current_user["password_hash"], current_password):
+        return redirect(url_for("profile", error="当前密码不正确"))
+    if new_password != confirm_password:
+        return redirect(url_for("profile", error="两次输入的新密码不一致"))
+    if not PASSWORD_MIN_LENGTH <= len(new_password) <= PASSWORD_MAX_LENGTH:
+        return redirect(url_for("profile", error="新密码长度不符合要求"))
 
     conn = _connect()
     try:
-        conn.execute(
+        result = conn.execute(
             """
             UPDATE users
             SET password_hash = ?
-            WHERE username = ?
+            WHERE id = ?
             """,
-            (generate_password_hash(new_password, method="scrypt"), username),
+            (generate_password_hash(new_password, method="scrypt"), current_user["id"]),
         )
+        if result.rowcount != 1:
+            abort(404)
         conn.commit()
     finally:
         conn.close()
 
-    return redirect(url_for("profile"))
+    # Keep the user signed in while rotating credentials and CSRF state.
+    session.clear()
+    session.permanent = True
+    session["username"] = current_user["username"]
+    session["_csrf_token"] = secrets.token_urlsafe(32)
+    return redirect(url_for("profile", msg="密码修改成功"))
 
 
 @app.route("/upload", methods=["GET", "POST"])
