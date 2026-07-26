@@ -267,3 +267,19 @@ a {
     color: #667eea;
     font-weight: 500;
 }
+
+.console-output {
+    margin-top: 24px;
+    min-height: 180px;
+    max-height: 420px;
+    overflow: auto;
+    padding: 16px;
+    border-radius: 6px;
+    background: #050505;
+    color: #39ff14;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+}

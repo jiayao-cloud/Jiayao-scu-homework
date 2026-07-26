@@ -1,8 +1,11 @@
 import hmac
+import ipaddress
 import os
+import platform
 import re
 import secrets
 import sqlite3
+import subprocess
 import time
 from collections import defaultdict, deque
 from datetime import timedelta
@@ -332,6 +335,7 @@ def apply_security_headers(response):
         "upload",
         "avatar_file",
         "profile",
+        "ping",
         "recharge",
         "change_password",
     }:
@@ -374,37 +378,36 @@ def index():
 
 @app.route("/welcome")
 def welcome():
-    name = request.args.get("name", "")
-    if name:
-        content = f"<h1>欢迎你，{name}！</h1>"
-    else:
-        content = "<h1>亲爱的用户，欢迎你！</h1>"
-
     return render_template_string(
-        f"""<!DOCTYPE html>
+        """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>欢迎页 - 用户管理系统</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <title>??? - ??????</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <nav class="navbar">
-        <div class="nav-brand">用户管理系统</div>
+        <div class="nav-brand">??????</div>
         <div class="nav-menu">
-            <a href="/" class="nav-link">首页</a>
-            <a href="/welcome" class="nav-link">欢迎页</a>
-            <a href="/feedback" class="nav-link">反馈</a>
-            <a href="/login" class="nav-link">登录</a>
-            <a href="/register" class="nav-link">注册</a>
+            <a href="{{ url_for('index') }}" class="nav-link">??</a>
+            <a href="{{ url_for('welcome') }}" class="nav-link">???</a>
+            <a href="{{ url_for('feedback') }}" class="nav-link">??</a>
+            <a href="{{ url_for('login') }}" class="nav-link">??</a>
+            <a href="{{ url_for('register') }}" class="nav-link">??</a>
         </div>
     </nav>
     <main class="container">
-        {content}
+        {% if name %}
+            <h1>????{{ name }}?</h1>
+        {% else %}
+            <h1>??????????</h1>
+        {% endif %}
     </main>
 </body>
-</html>"""
+</html>""",
+        name=request.args.get("name", "").strip(),
     )
 
 
@@ -413,39 +416,65 @@ def feedback():
     if request.method == "POST":
         name = request.form.get("name", "")
         message = request.form.get("message", "")
-        content = f"<h2>{name} 的反馈：</h2><p>{message}</p>"
-    else:
-        content = """<h1>反馈</h1>
-        <form method="post" action="/feedback" class="auth-form">
-            <label for="name">姓名</label>
-            <input id="name" name="name" type="text">
-            <label for="message">留言</label>
-            <textarea id="message" name="message" rows="6"></textarea>
-            <button type="submit">提交</button>
-        </form>"""
-
-    return render_template_string(
-        f"""<!DOCTYPE html>
+        return render_template_string(
+            """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>反馈 - 用户管理系统</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <title>?? - ??????</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <nav class="navbar">
-        <div class="nav-brand">用户管理系统</div>
+        <div class="nav-brand">??????</div>
         <div class="nav-menu">
-            <a href="/" class="nav-link">首页</a>
-            <a href="/welcome" class="nav-link">欢迎页</a>
-            <a href="/feedback" class="nav-link">反馈</a>
-            <a href="/login" class="nav-link">登录</a>
-            <a href="/register" class="nav-link">注册</a>
+            <a href="{{ url_for('index') }}" class="nav-link">??</a>
+            <a href="{{ url_for('welcome') }}" class="nav-link">???</a>
+            <a href="{{ url_for('feedback') }}" class="nav-link">??</a>
+            <a href="{{ url_for('login') }}" class="nav-link">??</a>
+            <a href="{{ url_for('register') }}" class="nav-link">??</a>
         </div>
     </nav>
     <main class="container">
-        {content}
+        <h2>{{ name }} ????</h2>
+        <p>{{ message }}</p>
+    </main>
+</body>
+</html>""",
+            name=name,
+            message=message,
+        )
+
+    return render_template_string(
+        """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>?? - ??????</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">??????</div>
+        <div class="nav-menu">
+            <a href="{{ url_for('index') }}" class="nav-link">??</a>
+            <a href="{{ url_for('welcome') }}" class="nav-link">???</a>
+            <a href="{{ url_for('feedback') }}" class="nav-link">??</a>
+            <a href="{{ url_for('login') }}" class="nav-link">??</a>
+            <a href="{{ url_for('register') }}" class="nav-link">??</a>
+        </div>
+    </nav>
+    <main class="container">
+        <h1>??</h1>
+        <form method="post" action="{{ url_for('feedback') }}" class="auth-form">
+            <label for="name">??</label>
+            <input id="name" name="name" type="text">
+            <label for="message">??</label>
+            <textarea id="message" name="message" rows="6"></textarea>
+            <button type="submit">??</button>
+        </form>
     </main>
 </body>
 </html>"""
@@ -680,6 +709,37 @@ def upload():
                 file_url = url_for("avatar_file", filename=filename)
 
     return render_template("upload.html", error=error, file_url=file_url)
+
+
+@app.route("/ping", methods=["GET", "POST"])
+def ping():
+    if not session.get("username"):
+        return redirect(url_for("login"))
+
+    output = None
+    ip = ""
+    if request.method == "POST":
+        ip = request.form.get("ip", "").strip()
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            return render_template("ping.html", ip=ip, output="Invalid IP address"), 400
+
+        count_flag = "-n" if platform.system().lower() == "windows" else "-c"
+        try:
+            output = subprocess.check_output(
+                ["ping", count_flag, "3", ip],
+                shell=False,
+                stderr=subprocess.STDOUT,
+                timeout=30,
+                text=True,
+            )
+        except subprocess.CalledProcessError as error:
+            output = error.output
+        except subprocess.TimeoutExpired as error:
+            output = error.output or "Command timed out"
+
+    return render_template("ping.html", ip=ip, output=output)
 
 
 @app.route("/avatars/<path:filename>")

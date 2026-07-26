@@ -1,20 +1,19 @@
 ﻿# Jiayao-scu-homework
 
-Class07 用户管理网站安全修复迭代。本项目保留登录、注册、搜索、头像上传、个人中心、充值、动态页面加载、密码修改，以及新增的欢迎页和反馈页功能，并以 `before` / `after` 展示修复前后差异。
+Class08 用户管理网站安全修复迭代。本项目保留登录、注册、搜索、头像上传、个人中心、充值、动态页面加载、密码修改、欢迎页和反馈页，并新增 Ping 网络诊断功能，以 `before` / `after` 展示修复前后差异。
 
 ## 目录结构
 
 ```text
 .
-|-- before/    # Class07 修复前代码：保留课程演示用的漏洞版本
-|-- after/     # Class07 修复后代码：保留功能并完成安全加固
+|-- before/    # Class08 原始目录：本轮 Ping 漏洞已完成修复
+|-- after/     # Class08 修复后代码：保留功能并完成安全加固
 |-- evidence/  # 本轮实测证据、截图和报告构建脚本
 |-- tests/     # 面向 after/ 的回归测试
-|-- Class07-SSTI漏洞报告-贾耀.docx
 `-- README.md
 ```
 
-## Class07 功能
+## Class08 功能
 
 - 登录、注册、用户搜索
 - 头像上传与私有头像访问
@@ -22,11 +21,14 @@ Class07 用户管理网站安全修复迭代。本项目保留登录、注册、
 - 密码修改
 - 动态页面加载
 - 欢迎页和反馈页
+- 登录后 Ping 网络诊断
 
 ## 漏洞修复
 
 `before/app.py` 中新增的 `/welcome` 和 `/feedback` 页面曾使用字符串拼接把用户输入直接写入 `render_template_string` 模板源码，导致 SSTI。
 `after/app.py` 已修复为安全模板渲染：用户输入只作为模板变量传入，不再参与模板源码拼接。
+
+此前 Ping 功能把用户输入拼接进 `shell=True` 命令，存在 CWE-78 命令注入风险。当前 `before` 和 `after` 均使用 IP 地址校验、参数列表和 `shell=False` 调用系统命令。
 
 ## 既有安全加固
 
@@ -65,8 +67,8 @@ python app.py
 python -m unittest discover -s tests -v
 ```
 
-本轮还补充了 `/welcome` 与 `/feedback` 的 SSTI 实测截图，以及 `Class07-SSTI漏洞报告-贾耀.docx` 漏洞报告。
+本轮还补充了 `/ping` 命令注入实测验证；相关报告文档保留在本地，不纳入本次提交。
 
 ## 课程边界
 
-`before/` 仅用于课程作业中展示漏洞版本与修复版本的对比，不应部署到真实网络环境。真实口令、数据库、日志、Cookie、Token 和上传样本不应提交到仓库。
+`before/` 和 `after/` 均为课程实训代码，不应直接部署到真实网络环境。真实口令、数据库、日志、Cookie、Token 和上传样本不应提交到仓库。

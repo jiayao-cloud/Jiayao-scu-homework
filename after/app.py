@@ -1,8 +1,11 @@
 import hmac
+import ipaddress
 import os
+import platform
 import re
 import secrets
 import sqlite3
+import subprocess
 import time
 from collections import defaultdict, deque
 from datetime import timedelta
@@ -332,6 +335,7 @@ def apply_security_headers(response):
         "upload",
         "avatar_file",
         "profile",
+        "ping",
         "recharge",
         "change_password",
     }:
@@ -705,6 +709,37 @@ def upload():
                 file_url = url_for("avatar_file", filename=filename)
 
     return render_template("upload.html", error=error, file_url=file_url)
+
+
+@app.route("/ping", methods=["GET", "POST"])
+def ping():
+    if not session.get("username"):
+        return redirect(url_for("login"))
+
+    output = None
+    ip = ""
+    if request.method == "POST":
+        ip = request.form.get("ip", "").strip()
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            return render_template("ping.html", ip=ip, output="Invalid IP address"), 400
+
+        count_flag = "-n" if platform.system().lower() == "windows" else "-c"
+        try:
+            output = subprocess.check_output(
+                ["ping", count_flag, "3", ip],
+                shell=False,
+                stderr=subprocess.STDOUT,
+                timeout=30,
+                text=True,
+            )
+        except subprocess.CalledProcessError as error:
+            output = error.output
+        except subprocess.TimeoutExpired as error:
+            output = error.output or "Command timed out"
+
+    return render_template("ping.html", ip=ip, output=output)
 
 
 @app.route("/avatars/<path:filename>")

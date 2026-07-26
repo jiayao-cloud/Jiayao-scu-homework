@@ -1,9 +1,11 @@
 import os
 import re
+import subprocess
 import sys
 import unittest
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -368,6 +370,40 @@ class SecureClass06AppTests(unittest.TestCase):
             content_type="multipart/form-data",
         )
         self.assertEqual(missing_csrf.status_code, 400)
+
+    def test_ping_requires_login(self):
+        response = self.client.get("/ping")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/login")
+
+    @patch("app.subprocess.check_output", return_value="PING_OK")
+    def test_ping_uses_argument_list_without_shell(self, check_output):
+        self.login("alice", os.environ["ALICE_PASSWORD"])
+
+        response = self.client.post("/ping", data={"ip": "127.0.0.1"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("PING_OK", response.get_data(as_text=True))
+        check_output.assert_called_once_with(
+            ["ping", "-n" if os.name == "nt" else "-c", "3", "127.0.0.1"],
+            shell=False,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+            text=True,
+        )
+
+    def test_ping_rejects_command_injection_payload_as_invalid_ip(self):
+        self.login("alice", os.environ["ALICE_PASSWORD"])
+
+        with patch("app.subprocess.check_output") as check_output:
+            response = self.client.post(
+                "/ping",
+                data={"ip": "127.0.0.1 & echo SHELL_INJECTION_CONFIRMED"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Invalid IP address", response.get_data(as_text=True))
+        check_output.assert_not_called()
 
     def test_upload_rejects_script_php_svg_and_mismatched_content(self):
         self.login()

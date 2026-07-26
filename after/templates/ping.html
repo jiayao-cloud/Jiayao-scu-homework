@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+
+{% block title %}Ping测试 - 用户管理系统{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2 class="card-title">Ping测试</h2>
+    <form method="post" action="{{ url_for('ping') }}" class="form" autocomplete="off">
+        <div class="form-group">
+            <label for="ip">IP 地址</label>
+            <input type="text" id="ip" name="ip" class="form-input" placeholder="例如：127.0.0.1" value="{{ ip or '' }}">
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Ping</button>
+    </form>
+
+    {% if output is not none %}
+    <pre class="console-output">{{ output }}</pre>
+    {% endif %}
+</div>
+{% endblock %}
